@@ -50,12 +50,12 @@ def main():
 
   if args.resume_from_model is None:
     nnue = M.NNUE(feature_set=feature_set, lambda_=args.lambda_)
-    nnue.cuda()
+    nnue.to('mps')
   else:
     nnue = torch.load(args.resume_from_model)
     nnue.set_feature_set(feature_set)
     nnue.lambda_ = args.lambda_
-    nnue.cuda()
+    nnue.to('mps')
 
   print("Feature set: {}".format(feature_set.name))
   print("Num real features: {}".format(feature_set.num_real_features))
@@ -84,9 +84,9 @@ def main():
 
   tb_logger = pl_loggers.TensorBoardLogger(logdir)
   checkpoint_callback = pl.callbacks.ModelCheckpoint(save_last=True, save_top_k=-1)
-  trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback], logger=tb_logger,accelerator='cuda')
+  trainer = pl.Trainer.from_argparse_args(args, callbacks=[checkpoint_callback], logger=tb_logger,accelerator='mps')
 
-  main_device = 'cuda:0'
+  main_device = 'mps'
 
   print('Using c++ data loader')
   train, val = make_data_loaders(args.train, args.val, feature_set, args.num_workers, batch_size, not args.no_smart_fen_skipping, args.random_fen_skipping, main_device)

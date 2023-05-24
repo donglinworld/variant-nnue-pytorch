@@ -32,16 +32,16 @@ class SparseBatch(ctypes.Structure):
     ]
 
     def get_tensors(self, device):
-        white_values = torch.from_numpy(np.ctypeslib.as_array(self.white_values, shape=(self.size, self.max_active_features))).pin_memory().to(device=device, non_blocking=True)
-        black_values = torch.from_numpy(np.ctypeslib.as_array(self.black_values, shape=(self.size, self.max_active_features))).pin_memory().to(device=device, non_blocking=True)
-        white_indices = torch.from_numpy(np.ctypeslib.as_array(self.white, shape=(self.size, self.max_active_features))).pin_memory().to(device=device, non_blocking=True)
-        black_indices = torch.from_numpy(np.ctypeslib.as_array(self.black, shape=(self.size, self.max_active_features))).pin_memory().to(device=device, non_blocking=True)
-        us = torch.from_numpy(np.ctypeslib.as_array(self.is_white, shape=(self.size, 1))).pin_memory().to(device=device, non_blocking=True)
+        white_values = torch.from_numpy(np.ctypeslib.as_array(self.white_values, shape=(self.size, self.max_active_features))).to(device=device, non_blocking=True)
+        black_values = torch.from_numpy(np.ctypeslib.as_array(self.black_values, shape=(self.size, self.max_active_features))).to(device=device, non_blocking=True)
+        white_indices = torch.from_numpy(np.ctypeslib.as_array(self.white, shape=(self.size, self.max_active_features))).to(device=device, non_blocking=True)
+        black_indices = torch.from_numpy(np.ctypeslib.as_array(self.black, shape=(self.size, self.max_active_features))).to(device=device, non_blocking=True)
+        us = torch.from_numpy(np.ctypeslib.as_array(self.is_white, shape=(self.size, 1))).to(device=device, non_blocking=True)
         them = 1.0 - us
-        outcome = torch.from_numpy(np.ctypeslib.as_array(self.outcome, shape=(self.size, 1))).pin_memory().to(device=device, non_blocking=True)
-        score = torch.from_numpy(np.ctypeslib.as_array(self.score, shape=(self.size, 1))).pin_memory().to(device=device, non_blocking=True)
-        psqt_indices = torch.from_numpy(np.ctypeslib.as_array(self.psqt_indices, shape=(self.size,))).long().pin_memory().to(device=device, non_blocking=True)
-        layer_stack_indices = torch.from_numpy(np.ctypeslib.as_array(self.layer_stack_indices, shape=(self.size,))).long().pin_memory().to(device=device, non_blocking=True)
+        outcome = torch.from_numpy(np.ctypeslib.as_array(self.outcome, shape=(self.size, 1))).to(device=device, non_blocking=True)
+        score = torch.from_numpy(np.ctypeslib.as_array(self.score, shape=(self.size, 1))).to(device=device, non_blocking=True)
+        psqt_indices = torch.from_numpy(np.ctypeslib.as_array(self.psqt_indices, shape=(self.size,))).long().to(device=device, non_blocking=True)
+        layer_stack_indices = torch.from_numpy(np.ctypeslib.as_array(self.layer_stack_indices, shape=(self.size,))).long().to(device=device, non_blocking=True)
         return us, them, white_indices, white_values, black_indices, black_values, outcome, score, psqt_indices, layer_stack_indices
 
 SparseBatchPtr = ctypes.POINTER(SparseBatch)
@@ -61,7 +61,7 @@ class TrainingDataProvider:
         batch_size=None,
         filtered=False,
         random_fen_skipping=0,
-        device='cpu'):
+        device='mps'):
 
         self.feature_set = feature_set.encode('utf-8')
         self.create_stream = create_stream
@@ -110,7 +110,7 @@ destroy_sparse_batch = dll.destroy_sparse_batch
 
 
 class SparseBatchProvider(TrainingDataProvider):
-    def __init__(self, feature_set, filename, batch_size, cyclic=True, num_workers=1, filtered=False, random_fen_skipping=0, device='cpu'):
+    def __init__(self, feature_set, filename, batch_size, cyclic=True, num_workers=1, filtered=False, random_fen_skipping=0, device='mps'):
         super(SparseBatchProvider, self).__init__(
             feature_set,
             create_sparse_batch_stream,
@@ -126,7 +126,7 @@ class SparseBatchProvider(TrainingDataProvider):
             device)
 
 class SparseBatchDataset(torch.utils.data.IterableDataset):
-  def __init__(self, feature_set, filename, batch_size, cyclic=True, num_workers=1, filtered=False, random_fen_skipping=0, device='cpu'):
+  def __init__(self, feature_set, filename, batch_size, cyclic=True, num_workers=1, filtered=False, random_fen_skipping=0, device='mps'):
     super(SparseBatchDataset).__init__()
     self.feature_set = feature_set
     self.filename = filename

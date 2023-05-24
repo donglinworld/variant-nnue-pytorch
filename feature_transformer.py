@@ -1,7 +1,6 @@
 import torch
 from torch import nn
 from torch import autograd
-import cupy as cp
 import math
 
 def _find_nearest_divisor(value, target):
@@ -301,11 +300,6 @@ class FeatureTransformerSliceFunction(autograd.Function):
         assert len(bias.shape) == 1
         assert bias.dtype == torch.float32
 
-        assert feature_indices.is_cuda
-        assert feature_values.is_cuda
-        assert weight.is_cuda
-        assert bias.is_cuda
-
         assert feature_values.device == feature_indices.device
         assert weight.device == feature_indices.device
         assert bias.device == feature_indices.device
@@ -392,13 +386,6 @@ class DoubleFeatureTransformerSliceFunction(autograd.Function):
 
         assert len(bias.shape) == 1
         assert bias.dtype == torch.float32
-
-        assert feature_indices_0.is_cuda
-        assert feature_values_0.is_cuda
-        assert feature_indices_1.is_cuda
-        assert feature_values_1.is_cuda
-        assert weight.is_cuda
-        assert bias.is_cuda
 
         assert feature_values_0.device == feature_indices_0.device
         assert feature_values_1.device == feature_indices_1.device
@@ -553,9 +540,7 @@ if __name__ == '__main__':
 
         output00 = FeatureTransformerSliceFunctionEmulate(indices0.clone(), values0.clone(), weight0, bias0)
         output01 = FeatureTransformerSliceFunctionEmulate(indices1.clone(), values1.clone(), weight0, bias0)
-        #output10 = FeatureTransformerSliceFunction.apply(indices0.clone().cuda(), values0.clone().cuda(), weight1.cuda(), bias1.cuda())
-        #output11 = FeatureTransformerSliceFunction.apply(indices1.clone().cuda(), values1.clone().cuda(), weight1.cuda(), bias1.cuda())
-        output10, output11 = DoubleFeatureTransformerSliceFunction.apply(indices0.clone().cuda(), values0.clone().cuda(), indices1.clone().cuda(), values1.clone().cuda(), weight1.cuda(), bias1.cuda())
+        output10, output11 = DoubleFeatureTransformerSliceFunction.apply(indices0.clone().to('mps'), values0.clone().to('mps'), indices1.clone().to('mps'), values1.clone().to('mps'), weight1.to('mps'), bias1.to('mps'))
 
         assert torch.max(output00.cpu() - output10.cpu()) < MAX_ERROR
         assert torch.max(output01.cpu() - output11.cpu()) < MAX_ERROR
@@ -572,11 +557,11 @@ if __name__ == '__main__':
         STRIDE = 264
         MAX_ACTIVE_FEATURES = 64
 
-        layer = DoubleFeatureTransformerSlice(INPUT_SIZE, STRIDE).cuda()
-        indices0 = torch.cat([torch.sort((torch.rand(BATCH_SIZE, MAX_ACTIVE_FEATURES * 3 // 4) * INPUT_SIZE), dim=1)[0].to(dtype=torch.int32), torch.full((BATCH_SIZE, MAX_ACTIVE_FEATURES // 4), -1, dtype=torch.int32)], dim=1).cuda()
-        values0 = torch.rand(BATCH_SIZE, MAX_ACTIVE_FEATURES, dtype=torch.float32).cuda()
-        indices1 = torch.cat([torch.sort((torch.rand(BATCH_SIZE, MAX_ACTIVE_FEATURES * 3 // 4)) * INPUT_SIZE, dim=1)[0].to(dtype=torch.int32), torch.full((BATCH_SIZE, MAX_ACTIVE_FEATURES // 4), -1, dtype=torch.int32)], dim=1).cuda()
-        values1 = torch.rand(BATCH_SIZE, MAX_ACTIVE_FEATURES, dtype=torch.float32).cuda()
+        layer = DoubleFeatureTransformerSlice(INPUT_SIZE, STRIDE).to('mps')
+        indices0 = torch.cat([torch.sort((torch.rand(BATCH_SIZE, MAX_ACTIVE_FEATURES * 3 // 4) * INPUT_SIZE), dim=1)[0].to(dtype=torch.int32), torch.full((BATCH_SIZE, MAX_ACTIVE_FEATURES // 4), -1, dtype=torch.int32)], dim=1).to('mps')
+        values0 = torch.rand(BATCH_SIZE, MAX_ACTIVE_FEATURES, dtype=torch.float32).to('mps')
+        indices1 = torch.cat([torch.sort((torch.rand(BATCH_SIZE, MAX_ACTIVE_FEATURES * 3 // 4)) * INPUT_SIZE, dim=1)[0].to(dtype=torch.int32), torch.full((BATCH_SIZE, MAX_ACTIVE_FEATURES // 4), -1, dtype=torch.int32)], dim=1).to('mps')
+        values1 = torch.rand(BATCH_SIZE, MAX_ACTIVE_FEATURES, dtype=torch.float32).to('mps')
 
         output0, output1 = layer(indices0, values0, indices1, values1)
 
@@ -592,7 +577,7 @@ if __name__ == '__main__':
             g = ((output0 - output1)**2).mean()
             g.backward()
 
-            torch.cuda.synchronize()
+            torch.mps.synchronize()
 
         end = time.time()
 
