@@ -4,7 +4,7 @@ from torch import nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
 import copy
-from feature_transformer import DoubleFeatureTransformerSlice
+import math
 
 # 3 layer fully connected network
 L1 = 512
@@ -123,7 +123,13 @@ class NNUE(pl.LightningModule):
     super(NNUE, self).__init__()
     self.num_psqt_buckets = feature_set.num_psqt_buckets
     self.num_ls_buckets = feature_set.num_ls_buckets
-    self.input = DoubleFeatureTransformerSlice(feature_set.num_features, L1 + self.num_psqt_buckets)
+
+    num_inputs = feature_set.num_features
+    num_outputs = L1 + self.num_psqt_buckets
+    sigma = math.sqrt(1/num_inputs)
+    self.weight = nn.Parameter(torch.rand(num_inputs, num_outputs, dtype=torch.float32) * (2 * sigma) - sigma)
+    self.bias = nn.Parameter(torch.rand(num_outputs, dtype=torch.float32) * (2 * sigma) - sigma)
+
     self.feature_set = feature_set
     self.layer_stacks = LayerStacks(self.num_ls_buckets)
     self.lambda_ = lambda_
@@ -141,11 +147,11 @@ class NNUE(pl.LightningModule):
   with fewest differences between correlated features.
   '''
   def _zero_virtual_feature_weights(self):
-    weights = self.input.weight
+    weights = self.weight
     with torch.no_grad():
       for a, b in self.feature_set.get_virtual_feature_ranges():
         weights[a:b, :] = 0.0
-    self.input.weight = nn.Parameter(weights)
+    self.weight = nn.Parameter(weights)
 
   '''
   Pytorch initializes biases around 0, but we want them
@@ -153,17 +159,17 @@ class NNUE(pl.LightningModule):
   layer should always be 0.
   '''
   def _init_layers(self):
-    input_bias = self.input.bias
+    input_bias = self.bias
     with torch.no_grad():
       for i in range(8):
         input_bias[L1 + i] = 0.0
-    self.input.bias = nn.Parameter(input_bias)
+    self.bias = nn.Parameter(input_bias)
 
     self._zero_virtual_feature_weights()
     self._init_psqt()
 
   def _init_psqt(self):
-    input_weights = self.input.weight
+    input_weights = self.weight
     # 1.0 / kPonanzaConstant
     scale = 1 / 600
     with torch.no_grad():
@@ -171,7 +177,7 @@ class NNUE(pl.LightningModule):
       assert len(initial_values) == self.feature_set.num_features
       for i in range(8):
         input_weights[:, L1 + i] = torch.FloatTensor(initial_values) * scale
-    self.input.weight = nn.Parameter(input_weights)
+    self.weight = nn.Parameter(input_weights)
 
   '''
   Clips the weights of the model based on the min/max values allowed
@@ -233,16 +239,19 @@ class NNUE(pl.LightningModule):
     # we only have to add the virtual feature on top of the already existing real ones.
     if old_feature_block.name == next(iter(new_feature_block.factors)):
       # We can just extend with zeros since it's unfactorized -> factorized
-      weights = self.input.weight
+      weights = self.weight
       padding = weights.new_zeros((new_feature_block.num_virtual_features, weights.shape[1]))
       weights = torch.cat([weights, padding], dim=0)
-      self.input.weight = nn.Parameter(weights)
+      self.weight = nn.Parameter(weights)
       self.feature_set = new_feature_set
     else:
       raise Exception('Cannot change feature set from {} to {}.'.format(self.feature_set.name, new_feature_set.name))
 
   def forward(self, us, them, white_indices, white_values, black_indices, black_values, psqt_indices, layer_stack_indices):
-    wp, bp = self.input(white_indices, white_values, black_indices, black_values)
+
+    wp = self.firstProc(white_indices, white_values,self.weight,self.bias)
+    bp = self.firstProc(black_indices, black_values,self.weight,self.bias)
+
     w, wpsqt = torch.split(wp, L1, dim=1)
     b, bpsqt = torch.split(bp, L1, dim=1)
     l0_ = (us * torch.cat([w, b], dim=1)) + (them * torch.cat([b, w], dim=1))
@@ -297,7 +306,7 @@ class NNUE(pl.LightningModule):
     # Train with a lower LR on the output layer
     LR = 1.5e-3
     train_params = [
-      {'params' : get_parameters([self.input]), 'lr' : LR, 'gc_dim' : 0 },
+      #{'params' : get_parameters([self.weight]), 'lr' : LR, 'gc_dim' : 0 },
       {'params' : [self.layer_stacks.l1_fact.weight], 'lr' : LR },
       {'params' : [self.layer_stacks.l1.weight], 'lr' : LR },
       {'params' : [self.layer_stacks.l1.bias], 'lr' : LR },
@@ -311,3 +320,17 @@ class NNUE(pl.LightningModule):
     # Drop learning rate after 75 epochs
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.987)
     return [optimizer], [scheduler]
+  
+  def firstProc(self, feature_indices, feature_values, weight, bias):
+     print(feature_indices.shape)
+     print(feature_values.shape)
+     print(weight.shape)
+     print(bias.shape)
+     print(feature_indices.shape[0])
+     print(weight.shape[0])
+     print(feature_indices[0].shape)
+     print(feature_indices[0])
+     
+     s = torch.sparse_coo_tensor(torch.transpose(feature_indices[0],-1,0), torch.transpose(feature_values[0],-1,0), size=(64, 11790) )
+
+     return s * weight + bias;
