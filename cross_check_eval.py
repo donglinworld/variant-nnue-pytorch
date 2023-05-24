@@ -88,7 +88,7 @@ def main():
     else:
         model = read_model(args.net, feature_set)
     model.eval()
-    model.to('cpu')
+    #model.to('cpu')
     fen_batch_provider = make_fen_batch_provider(args.data, batch_size)
 
     model_evals = []

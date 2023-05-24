@@ -1,10 +1,11 @@
 import ranger
 import torch
 from torch import nn
+from torch import autograd
+import math
 import torch.nn.functional as F
 import pytorch_lightning as pl
 import copy
-from feature_transformer import DoubleFeatureTransformerSlice
 
 # 3 layer fully connected network
 L1 = 512
@@ -123,7 +124,7 @@ class NNUE(pl.LightningModule):
     super(NNUE, self).__init__()
     self.num_psqt_buckets = feature_set.num_psqt_buckets
     self.num_ls_buckets = feature_set.num_ls_buckets
-    self.input = DoubleFeatureTransformerSlice(feature_set.num_features, L1 + self.num_psqt_buckets)
+    self.input = DoubleFeatureTransformer(feature_set.num_features, L1 + self.num_psqt_buckets)
     self.feature_set = feature_set
     self.layer_stacks = LayerStacks(self.num_ls_buckets)
     self.lambda_ = lambda_
@@ -311,3 +312,107 @@ class NNUE(pl.LightningModule):
     # Drop learning rate after 75 epochs
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1, gamma=0.987)
     return [optimizer], [scheduler]
+
+class DoubleFeatureTransformer(nn.Module):
+    def __init__(self, num_inputs, num_outputs):
+        super(DoubleFeatureTransformer, self).__init__()
+        self.num_inputs = num_inputs
+        self.num_outputs = num_outputs
+
+        sigma = math.sqrt(1/num_inputs)
+        self.weight = nn.Parameter(torch.rand(num_inputs, num_outputs, dtype=torch.float32) * (2 * sigma) - sigma)
+        self.bias = nn.Parameter(torch.rand(num_outputs, dtype=torch.float32) * (2 * sigma) - sigma)
+
+    def forward(self, feature_indices_0, feature_values_0, feature_indices_1, feature_values_1):
+        return DoubleFeatureTransformerFunction.apply(feature_indices_0, feature_values_0, feature_indices_1, feature_values_1, self.weight, self.bias)
+    
+class DoubleFeatureTransformerFunction(autograd.Function):
+
+    @staticmethod
+    def _forward_single(feature_indices, feature_values, weight, bias):
+        print('enter _forward_single')
+        print(feature_indices)
+        print(feature_indices.shape)
+        print(feature_values)
+        print(feature_values.shape)
+        print(weight)
+        print(weight.shape)
+        print(bias)
+        print(bias.shape)
+        batch_size = feature_indices.shape[0]
+        max_active_features = feature_indices.shape[1]
+        weigh_size= weight.shape[0]
+        output_size = weight.shape[1]
+        output = torch.empty(batch_size, output_size, dtype=torch.float32, requires_grad=True)
+        print("batch_size= {}".format(batch_size))
+        print("max_active_features= {}".format(max_active_features))
+        print("output_size= {}".format(output_size))
+
+        for i in range(batch_size):
+          print("i= {}".format(i))
+          for j in range(output_size):
+            #print("j= {}".format(j))
+            output[i,j] = bias[j]
+            value = 0
+            for k in range(max_active_features):
+              #print("k= {}".format(k))
+              findex = feature_indices[i,k]
+              #print("findex= {}".format(findex))
+              if  findex == -1 or findex >= weigh_size:
+                #print('break')
+                break
+              else:
+                for m in range(output_size):
+                  #print("findex= {}".format(findex))
+                  #print("m= {}".format(m))
+                  #print("weightnode= {}".format(weight[findex, m]))
+                  value += ((weight[findex, m]) * (feature_values[i,k]))
+            output[i,j] += value
+        print('leave _forward_single')
+      
+        return output
+
+    @staticmethod
+    def forward(ctx, feature_indices_0, feature_values_0, feature_indices_1, feature_values_1, weight, bias):
+        ctx.save_for_backward(feature_indices_0, feature_values_0, feature_indices_1, feature_values_1, weight, bias)
+
+        output0 = DoubleFeatureTransformerFunction._forward_single( feature_indices_0, feature_values_0, weight, bias)
+        output1 = DoubleFeatureTransformerFunction._forward_single( feature_indices_1, feature_values_1, weight, bias)
+
+        return output0, output1
+
+    @staticmethod
+    def _backward_single(feature_indices, feature_values, weight_grad, bias_grad, grad_output):
+        print('_backward_single')
+        batch_size = feature_indices.shape[0]
+        max_active_features = feature_indices.shape[1]
+        output_size = weight_grad.shape[1]
+
+        for i in range(batch_size):
+          for j in range(output_size):
+             bias_grad[j] += grad_output[i,j]
+
+          for k in range(max_active_features):
+            findex = feature_indices[i,k]
+            if  findex == -1:
+              break
+            else:
+              for m in range(output_size):
+                weight_grad[i,k] += weight_grad[i,k] + weight_grad[findex, m] * feature_values[i,k]
+
+    @staticmethod
+    def backward(ctx, grad_output_0, grad_output_1):
+        assert not ctx.needs_input_grad[0]
+        assert not ctx.needs_input_grad[1]
+        
+        feature_indices_0, feature_values_0, feature_indices_1, feature_values_1, weight, bias = ctx.saved_tensors
+
+        output_size = weight.shape[1]
+
+        weight_grad = torch.zeros(weight.shape[0], weight.shape[1], dtype=torch.float32)
+        bias_grad = torch.zeros(output_size, dtype=torch.float32)
+
+        DoubleFeatureTransformerFunction._backward_single(feature_indices_0, feature_values_0,weight_grad, bias_grad, grad_output_0)
+        DoubleFeatureTransformerFunction._backward_single(feature_indices_1, feature_values_1,weight_grad, bias_grad, grad_output_1)
+
+        return None, None, None, None, weight_grad, bias_grad
