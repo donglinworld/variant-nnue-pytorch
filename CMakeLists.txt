@@ -13,7 +13,7 @@ set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-g -O3")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED 17)
 
-add_library(training_data_loader SHARED training_data_loader.cpp)
+add_library(training_data_loader SHARED training_data_loader.cpp util.cpp)
 
 find_package(Threads REQUIRED)
 
